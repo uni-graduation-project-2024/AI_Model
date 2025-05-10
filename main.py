@@ -1,28 +1,44 @@
-import google.generativeai as genai
-import typing_extensions as typing
+import os
+import json
+import fitz  # PyMuPDF for PDF text extraction
+import docx  # python-docx for DOCX extraction
+from pathlib import Path
+from typing import List, Optional, Union
+
 from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from dotenv import load_dotenv
+import google.generativeai as genai
 import uvicorn
-import os
-import json
-from pathlib import Path
-import fitz  # PyMuPDF for PDF text extraction
-import docx  # python-docx for DOCX extraction
 
-UPLOAD_DIR = Path() / 'Uploads'
-UPLOAD_DIR.mkdir(exist_ok=True)  # Ensure upload directory exists
+# Load .env file
+# load_dotenv()
+API_KEY = os.getenv("gemniKey")
 
+# Validate API key
+if not API_KEY:
+    raise ValueError("Missing GEMINI_API_KEY in .env")
+
+# Configure Gemini
+genai.configure(api_key=API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")  # ✅ Use the faster model
+
+# Uploads folder
+UPLOAD_DIR = Path("Uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# FastAPI setup
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# MCQ Model
 class McqQuestion(BaseModel):
     questionNumber: int
     question: str
@@ -30,23 +46,26 @@ class McqQuestion(BaseModel):
     correctAnswer: str
     explanation: str
 
-
+# Extract text from files
 def extract_text_from_file(file_path: str) -> str:
-    """Extract text from PDF, DOCX, and TXT files."""
     ext = file_path.split('.')[-1].lower()
-    if ext == "pdf":
-        doc = fitz.open(file_path)
-        text = "\n".join(page.get_text("text") for page in doc)
-    elif ext == "docx":
-        doc = docx.Document(file_path)
-        text = "\n".join(para.text for para in doc.paragraphs)
-    elif ext == "txt":
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-    else:
-        text = ""
-    return text
+    try:
+        if ext == "pdf":
+            doc = fitz.open(file_path)
+            return "\n".join(page.get_text("text") for page in doc)
+        elif ext == "docx":
+            doc = docx.Document(file_path)
+            return "\n".join(para.text for para in doc.paragraphs)
+        elif ext == "txt":
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        else:
+            return ""
+    except Exception as e:
+        print("Error reading file:", e)
+        return ""
 
+# Main endpoint
 @app.post("/generateQuestions")
 async def generate_questions(
     sourceType: str = Form(...),
@@ -56,33 +75,29 @@ async def generate_questions(
     typeOfQuestions: str = Form(...),
     fileInput: Optional[UploadFile] = File(None)
 ) -> Union[List[McqQuestion], dict]:
-    
-    API_KEY = os.getenv("gemniKey")
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-pro')
 
+    # Read input text
     if sourceType == "TEXT":
         text_source = textInput
     elif sourceType == "FILE" and fileInput:
-        save_to = UPLOAD_DIR / fileInput.filename ## ToDo: add random number or dateNow in seconds to the file name
+        save_to = UPLOAD_DIR / fileInput.filename
         with open(save_to, 'wb') as f:
             f.write(await fileInput.read())
-
         text_source = extract_text_from_file(str(save_to))
+        os.remove(save_to)
         if not text_source.strip():
             return {"error": "Could not extract text from the file. Ensure it's a readable PDF, DOCX, or TXT."}
     else:
         return {"error": "Invalid input. Provide either text or a valid file."}
 
-    # Define the structured prompt
+    # Build prompt
     prompt = f"""
     Generate {numOfQuestions} {difficultyLevel} {typeOfQuestions} questions based on this text:
-    
+
     {text_source}
-    
+
     Provide the response in JSON format, following this structure:
-    
-    - If MCQ:
+
     [{{
       "questionNumber": 1,
       "question": "What is the capital of France?",
@@ -90,30 +105,25 @@ async def generate_questions(
       "correctAnswer": "Paris",
       "explanation": "Paris is the capital of France."
     }}]
-    
-    - If True/False:
-    [{{
-      "questionNumber": 1,
-      "question": "The sun rises in the west.",
-      "options": ["True", "False"],
-      "correctAnswer": "False",
-      "explanation": "The sun rises in the east."
-    }}]
-
-    please don't add any new lines
+    Only return valid JSON without extra explanation or Markdown.
     """
 
-    response = model.generate_content([prompt])
-    print(response.text)
     try:
-        parsed_data = json.loads(response.text)
-        responseQuestions = {"questionData": [McqQuestion(**q) for q in parsed_data]}
-        print(responseQuestions)
-        return responseQuestions
+        response = model.generate_content([prompt])
+        response_text = response.text
+
+        # Handle extra formatting issues
+        cleaned_response = response_text.strip().strip("```json").strip("```")
+        parsed_data = json.loads(cleaned_response)
+
+        return {"questionData": [McqQuestion(**q) for q in parsed_data]}
 
     except json.JSONDecodeError:
-        return {"error": "Failed to parse AI response. Ensure the API is returning valid JSON."}
+        return {"error": "The model did not return valid JSON. Try reducing input size or rephrasing text."}
+    except Exception as e:
+        print("Error:", e)
+        return {"error": f"Gemini API failed: {str(e)}"}
 
+# Run the app
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
