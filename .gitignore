@@ -1,3 +1,5 @@
 Uploads/
 
 __pycache__/
+
+.env
