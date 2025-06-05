@@ -2,6 +2,7 @@ import os
 import json
 import fitz  # PyMuPDF for PDF text extraction
 import docx  # python-docx for DOCX extraction
+from pptx import Presentation
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -13,7 +14,7 @@ import google.generativeai as genai
 import uvicorn
 
 # Load .env file
-# load_dotenv()
+load_dotenv()
 API_KEY = os.getenv("gemniKey")
 
 # Validate API key
@@ -22,7 +23,7 @@ if not API_KEY:
 
 # Configure Gemini
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")  # ✅ Use the faster model
+model = genai.GenerativeModel("gemini-1.5-flash") 
 
 # Uploads folder
 UPLOAD_DIR = Path("Uploads")
@@ -59,6 +60,15 @@ def extract_text_from_file(file_path: str) -> str:
         elif ext == "txt":
             with open(file_path, "r", encoding="utf-8") as f:
                 return f.read()
+        elif ext == "pptx":
+            prs = Presentation(file_path)
+            text_runs = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text_runs.append(shape.text)
+            text = "\n".join(text_runs)
+            return text
         else:
             return ""
     except Exception as e:
@@ -105,7 +115,15 @@ async def generate_questions(
       "correctAnswer": "Paris",
       "explanation": "Paris is the capital of France."
     }}]
+    Please follow this schema in your response:
+        questionNumber: integer
+        question: string
+        options: List[string]
+        correctAnswer: string
+        explanation: string
+    In true and false question provide the options as "options": ["True","False"]
     Only return valid JSON without extra explanation or Markdown.
+    
     """
 
     try:
