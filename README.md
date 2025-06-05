@@ -1,5 +1,9 @@
 # MCQ & True/False Question Generation using Gemini API
 
+First make sure to install the required packages
+
+## `pip install -r requirements.txt`
+
 In the project directory, you can run:
 
 ### `python main.py`
