@@ -99,6 +99,10 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("❌ GEMINI_API_KEY not found in .env")
 
+from pathlib import Path
+UPLOAD_DIR = Path("GeneratedAudios")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
 # Configure Gemini with tutor tone
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(
@@ -169,7 +173,7 @@ async def text_to_speech(request: ChatRequest):
         # Generate audio
         tts = gTTS(text=clean_text, lang=language)
         filename = f"audio_{uuid.uuid4()}.mp3"
-        filepath = os.path.join(".", filename)
+        filepath = os.path.join(".\\GeneratedAudios", filename)
         tts.save(filepath)
 
         return FileResponse(filepath, media_type="audio/mpeg", filename=filename)

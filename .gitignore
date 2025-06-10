@@ -1,5 +1,7 @@
 Uploads/
 
+GeneratedAudios/
+
 __pycache__/
 
 .env
